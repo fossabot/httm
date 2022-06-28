@@ -38,6 +38,7 @@ mod interactive;
 mod parse_mounts;
 mod process_dirs;
 mod snapshot_ops;
+mod test;
 mod utility;
 mod versions_lookup;
 
