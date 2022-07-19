@@ -18,11 +18,12 @@
 use std::{
     collections::BTreeMap,
     fs::read_dir,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, Ancestors},
     time::SystemTime,
 };
 
 use itertools::Itertools;
+use moka::sync::Cache;
 use rayon::prelude::*;
 
 use crate::{
@@ -303,26 +304,41 @@ fn get_proximate_dataset(
     pathdata: &PathData,
     map_of_datasets: &HashMap<PathBuf, (String, FilesystemType)>,
 ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync + 'static>> {
-    // for /usr/bin, we prefer the most proximate: /usr/bin to /usr and /
-    // ancestors() iterates in this top-down order, when a value: dataset/fstype is available
-    // we map to return the key, instead of the value
-    let ancestors: Vec<&Path> = pathdata.path_buf.ancestors().collect();
+    lazy_static! {
+        static ref CACHE: Cache<PathBuf, PathBuf> = Cache::new(30);
+    };
 
-    let opt_best_potential_mountpoint: Option<&Path> =
+    let fallback = |parent: &Path, the_rest: Ancestors| {
+        // for /usr/bin, we prefer the most proximate: /usr/bin to /usr and /
+        // ancestors() iterates in this top-down order, when a value: dataset/fstype is available
+        // we map to return the key, instead of the value
+
         // find_map_first should return the first seq result with a par_iter
         // but not with a par_bridge
-        ancestors.into_par_iter().find_map_first(|ancestor| {
-            if map_of_datasets
-                .contains_key(ancestor){
-                    Some(ancestor)
-                } else {
-                    None
+        the_rest.into_iter().find_map(|ancestor| {
+            if map_of_datasets.contains_key(ancestor) {
+                if let ancestor = parent {
+                    CACHE.insert(parent.to_path_buf(), ancestor.to_path_buf());
                 }
-        });
+                Some(ancestor)
+            } else {
+                None
+            }
+        })
+    };
+
+    let path = pathdata.path_buf;
+    let parent = 
+
+    let mut ancestors = pathdata.path_buf.ancestors();
+
+    let get_opt_best_potential_mountpoint = || -> Option<&Path> {
+
+    };
 
     // do we have any mount points left? if not print error
-    match opt_best_potential_mountpoint.map(|path| path.to_path_buf()) {
-        Some(best_potential_mountpoint) => Ok(best_potential_mountpoint),
+    match get_opt_best_potential_mountpoint() {
+        Some(best_potential_mountpoint) => Ok(best_potential_mountpoint.to_path_buf()),
         None => {
             let msg = "httm could not identify any qualifying dataset.  Maybe consider specifying manually at SNAP_POINT?";
             Err(HttmError::new(msg).into())
