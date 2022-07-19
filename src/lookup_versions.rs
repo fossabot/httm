@@ -18,7 +18,7 @@
 use std::{
     collections::BTreeMap,
     fs::read_dir,
-    path::{Path, PathBuf, Ancestors},
+    path::{Path, PathBuf},
     time::SystemTime,
 };
 
@@ -308,37 +308,49 @@ fn get_proximate_dataset(
         static ref CACHE: Cache<PathBuf, PathBuf> = Cache::new(30);
     };
 
-    let fallback = |parent: &Path, the_rest: Ancestors| {
+    let ancestors = pathdata.path_buf.ancestors();
+
+    let fallback = |opt_parent: Option<&Path>| {
         // for /usr/bin, we prefer the most proximate: /usr/bin to /usr and /
         // ancestors() iterates in this top-down order, when a value: dataset/fstype is available
         // we map to return the key, instead of the value
 
         // find_map_first should return the first seq result with a par_iter
         // but not with a par_bridge
-        the_rest.into_iter().find_map(|ancestor| {
+        ancestors.into_iter().find_map(|ancestor| {
             if map_of_datasets.contains_key(ancestor) {
-                if let ancestor = parent {
-                    CACHE.insert(parent.to_path_buf(), ancestor.to_path_buf());
+                if let Some(parent) = opt_parent {
+                    if parent == ancestor {
+                        CACHE.insert(parent.to_path_buf(), ancestor.to_path_buf());
+                    }
                 }
-                Some(ancestor)
+                Some(ancestor.to_path_buf())
             } else {
                 None
             }
         })
     };
 
-    let path = pathdata.path_buf;
-    let parent = 
+    let path = &pathdata.path_buf;
+    let opt_parent = pathdata.path_buf.parent();
 
-    let mut ancestors = pathdata.path_buf.ancestors();
-
-    let get_opt_best_potential_mountpoint = || -> Option<&Path> {
-
+    let opt_best_potential_mountpoint = {
+        if map_of_datasets.contains_key(path) {
+            Some(path.to_path_buf())
+        } else if let Some(parent) = opt_parent {
+            if let Some(res) = CACHE.get(parent) {
+                Some(res)
+            } else {
+                fallback(opt_parent)
+            }
+        } else {
+            fallback(opt_parent)
+        }
     };
 
     // do we have any mount points left? if not print error
-    match get_opt_best_potential_mountpoint() {
-        Some(best_potential_mountpoint) => Ok(best_potential_mountpoint.to_path_buf()),
+    match opt_best_potential_mountpoint {
+        Some(best_potential_mountpoint) => Ok(best_potential_mountpoint),
         None => {
             let msg = "httm could not identify any qualifying dataset.  Maybe consider specifying manually at SNAP_POINT?";
             Err(HttmError::new(msg).into())
